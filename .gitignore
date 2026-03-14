@@ -1,0 +1,6 @@
+.env
+products.json
+alerts.json
+**/.DS_Store
+__pycache__/
+
