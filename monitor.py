@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional, List, Set
 import pytz
 import requests
 from bs4 import BeautifulSoup
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 
 # Load environment variables from .env if present
@@ -148,64 +149,77 @@ def parse_products(html: str, product_type: str) -> Dict[str, Dict[str, Any]]:
 
 
 def fetch_all_products() -> Dict[str, Dict[str, Any]]:
-    """
-    Fetch and parse products from all configured category URLs,
-    handling pagination for each category.
-
-    For each base URL in TARGET_URLS:
-      - page 1: base URL
-      - page 2+: base URL + ?page=N
-
-    Products from all categories are merged into a single dict keyed by URL.
-    If the same URL appears in more than one category, the first occurrence is kept.
-    """
     all_products: Dict[str, Dict[str, Any]] = {}
+    urls_to_fetch = []
 
     for base_url in TARGET_URLS:
-        # Derive a simple category label from the URL for logging
+
         parts = base_url.rstrip("/").split("/")
         category_slug = parts[-2] if len(parts) >= 2 else base_url
         print(f"\nScanning category: {category_slug}")
 
-        # Determine product type based on category URL
         if "mini-gt-blister-pack" in base_url:
             product_type = "Blister"
-        elif "mini-gt/MTY1" in base_url or "mini-gt/MTY1" in base_url.replace("+", " "):
+        elif "mini-gt/MTY1" in base_url:
             product_type = "Box"
         else:
             product_type = "Unknown"
 
         page = 1
+
         while True:
             if not is_monitoring_time():
                 now = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
                 print(f"[{now} IST] Outside monitoring hours (9 AM – 10 PM). Sleeping...")
                 time.sleep(300) # sleep for 5 minutes
                 continue
-            
-            print(f"Monitoring time: {is_monitoring_time()}")
-            print(f"  Scanning page {page}...")
+
             url = base_url if page == 1 else f"{base_url}?page={page}"
+
             html = fetch_page(url)
+
             if html is None:
-                print(f"  Failed to fetch page {page}, stopping pagination for this category.")
                 break
 
-            page_products = parse_products(html, product_type)
-            if not page_products:
-                print(f"  No products found on page {page}, stopping pagination for this category.")
+            soup = BeautifulSoup(html, "html.parser")
+            cards = soup.select(".show-product-small-bx")
+
+            if not cards:
                 break
 
-            # Merge products, but do not overwrite duplicates from other categories
-            for prod_url, prod in page_products.items():
-                if prod_url in all_products:
-                    # Duplicate URL across categories/pages – keep the first one
-                    continue
-                all_products[prod_url] = prod
+            urls_to_fetch.append((url, product_type))
 
             page += 1
 
-    print(f"\nTotal products found across all categories and pages: {len(all_products)}")
+    print(f"\nTotal pages found across all categories: {len(urls_to_fetch)}")
+    print("Starting parallel page fetching...")
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+
+        future_to_url = {
+            executor.submit(fetch_page, item[0]): item for item in urls_to_fetch
+        }
+
+        for future in as_completed(future_to_url):
+
+            url, product_type = future_to_url[future]
+
+            try:
+                html = future.result()
+
+                if html is None:
+                    continue
+
+                page_products = parse_products(html, product_type)
+
+                for prod_url, prod in page_products.items():
+                    all_products[prod_url] = prod
+
+            except Exception as e:
+                print(f"Error processing page {url}: {e}")
+
+    print(f"\nTotal products found across all pages: {len(all_products)}")
+
     return all_products
 
 
