@@ -3,7 +3,7 @@ import os
 import time
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Set
-
+import pytz
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -19,6 +19,12 @@ TARGET_URLS = [
 PRODUCTS_FILE = "products.json"
 ALERTS_FILE = "alerts.json"
 CHECK_INTERVAL_SECONDS = 15
+IST = pytz.timezone("Asia/Kolkata")
+
+def is_monitoring_time():
+    now = datetime.now(IST)
+    hour = now.hour
+    return 9 <= hour < 22
 
 # Telegram configuration from environment
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -171,6 +177,13 @@ def fetch_all_products() -> Dict[str, Dict[str, Any]]:
 
         page = 1
         while True:
+            if not is_monitoring_time():
+                now = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+                print(f"[{now} IST] Outside monitoring hours (9 AM – 10 PM). Sleeping...")
+                time.sleep(300) # sleep for 5 minutes
+                continue
+            
+            print(f"Monitoring time: {is_monitoring_time()}")
             print(f"  Scanning page {page}...")
             url = base_url if page == 1 else f"{base_url}?page={page}"
             html = fetch_page(url)
