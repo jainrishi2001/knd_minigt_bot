@@ -211,6 +211,7 @@ def parse_products(html: str, product_type: str) -> Dict[str, Dict[str, Any]]:
             "quantity": stock_info["quantity"],
             "type": product_type,
             "image_url": image_url,
+            "last_seen": datetime.now().isoformat(),
         }
 
     return products
@@ -476,17 +477,29 @@ def monitor() -> None:
             
             # Skip missing products — do not assume sold out
             missing_names = set(previous_names.keys()) - set(current_names.keys())
-            if missing_names:
-                print(f"\nSkipping {len(missing_names)} products temporarily missing from listing (not marking as sold out).")
-            # EXISTING PRODUCTS
+            for name in missing_names:
+                old = previous_names[name]
+                if name not in alerted_names:
+                    # Only alert if it was recently seen (optional: add grace period)
+                    last_seen_str = old.get("last_seen")
+                    if last_seen_str:
+                        last_seen_dt = datetime.fromisoformat(last_seen_str)
+                        time_diff = (datetime.now() - last_seen_dt).total_seconds()
+                    else:
+                        time_diff = 0
+                    if time_diff < 24 * 3600:
+                        new_sold_out = old.copy()
+                        new_sold_out["quantity"] = 0
+                        new_sold_out["stock_status"] = "Sold Out"
+                        notify_sold_out(old, new_sold_out)
+                        alerted_names.add(name)
+
             for name in sorted(set(previous_names.keys()) & set(current_names.keys())):
                 old = previous_names[name]
                 new = current_names[name]
 
                 old_stock = str(old.get("stock_status", ""))
                 new_stock = str(new.get("stock_status", ""))
-                old_qty = old.get("quantity")
-                new_qty = new.get("quantity")
 
                 if "sold out" in old_stock.lower() and "in stock" in new_stock.lower():
                     notify_restock(old, new)
