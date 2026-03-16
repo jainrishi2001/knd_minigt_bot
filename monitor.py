@@ -474,16 +474,10 @@ def monitor() -> None:
                 notify_new_product(product)
                 changes_detected = True
             
-            # PRODUCTS THAT DISAPPEARED (assume sold out)
+            # Skip missing products — do not assume sold out
             missing_names = set(previous_names.keys()) - set(current_names.keys())
-            for name in missing_names:
-                old = previous_names[name]
-                if old.get("quantity") != 0:
-                    print(f"\nPRODUCT REMOVED FROM LISTING (assume sold out): {name}")
-                    old["quantity"] = 0
-                    old["stock_status"] = "Sold Out"
-                    current_products[old["url"]] = old
-            
+            if missing_names:
+                print(f"\nSkipping {len(missing_names)} products temporarily missing from listing (not marking as sold out).")
             # EXISTING PRODUCTS
             for name in sorted(set(previous_names.keys()) & set(current_names.keys())):
                 old = previous_names[name]
