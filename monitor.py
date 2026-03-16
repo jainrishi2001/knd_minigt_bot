@@ -37,7 +37,9 @@ if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
 # In-memory set of product names that have already triggered Telegram alerts
 alerted_names: Set[str] = set()
 
-
+# --------------------------
+# TELEGRAM ALERT FUNCTIONS
+# --------------------------
 def send_telegram_alert(message: str) -> None:
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
@@ -51,7 +53,24 @@ def send_telegram_alert(message: str) -> None:
     except requests.RequestException as exc:
         print(f"Telegram alert error: {exc}")
 
+def send_telegram_photo(message: str, image_url: str) -> None:
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "photo": image_url,
+        "caption": message,
+        "parse_mode": "HTML"
+    }
+    try:
+        resp = requests.post(url, json=payload, timeout=10)
+        if resp.status_code != 200:
+            print(f"Telegram photo alert failed: {resp.text}")
+    except requests.RequestException as exc:
+        print(f"Telegram photo error: {exc}")
 
+# --------------------------
+# DATA STORAGE FUNCTIONS
+# --------------------------
 def load_alerted_names(path: str = ALERTS_FILE) -> Set[str]:
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -67,7 +86,6 @@ def load_alerted_names(path: str = ALERTS_FILE) -> Set[str]:
         print(f"Warning: could not read {path}: {exc}")
         return set()
 
-
 def save_alerted_names(names: Set[str], path: str = ALERTS_FILE) -> None:
     try:
         with open(path, "w", encoding="utf-8") as f:
@@ -75,7 +93,27 @@ def save_alerted_names(names: Set[str], path: str = ALERTS_FILE) -> None:
     except OSError as exc:
         print(f"Error: could not save alerts to {path}: {exc}")
 
+def load_previous_products(path: str = PRODUCTS_FILE) -> Dict[str, Dict[str, Any]]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"Warning: could not read {path}: {exc}")
+        return {}
 
+def save_products(products: Dict[str, Dict[str, Any]], path: str = PRODUCTS_FILE) -> None:
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(products, f, indent=2, ensure_ascii=False)
+    except OSError as exc:
+        print(f"Error: could not save products to {path}: {exc}")
+
+# --------------------------
+# FETCHING FUNCTIONS
+# --------------------------
 def fetch_page(url: str) -> Optional[str]:
     try:
         response = requests.get(url, timeout=10)
@@ -85,6 +123,30 @@ def fetch_page(url: str) -> Optional[str]:
         print(f"[{datetime.now().isoformat()}] Network error while fetching page: {exc}")
         return None
 
+def fetch_product_image(product_url: str) -> Optional[str]:
+    """
+    Robustly fetch main product image URL from a listing page.
+    """
+    html = fetch_page(product_url)
+    if not html:
+        return None
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Try multiple possible image classes
+    img_tag = (
+        soup.select_one("img.gc-display-display") or
+        soup.select_one("img.gc-overlay-display") or
+        soup.select_one("img.lazy")
+    )
+    if img_tag:
+        image_url = img_tag.get("data-src") or img_tag.get("data-original") or img_tag.get("src")
+        if image_url:
+            image_url = image_url.strip().split("?")[0]
+            if not image_url.startswith("http"):
+                image_url = BASE_URL.rstrip("/") + "/" + image_url.lstrip("/")
+            return image_url
+    return None
 
 def _extract_stock_info(card: BeautifulSoup) -> Dict[str, Any]:
     size_li = card.select_one(".add-top-size li[data-qty]")
@@ -105,7 +167,6 @@ def _extract_stock_info(card: BeautifulSoup) -> Dict[str, Any]:
         stock_status = "Unknown"
     return {"stock_status": stock_status, "quantity": quantity}
 
-
 def parse_products(html: str, product_type: str) -> Dict[str, Dict[str, Any]]:
     soup = BeautifulSoup(html, "html.parser")
     products: Dict[str, Dict[str, Any]] = {}
@@ -123,8 +184,13 @@ def parse_products(html: str, product_type: str) -> Dict[str, Dict[str, Any]]:
         if not url.startswith("http"):
             url = BASE_URL.rstrip("/") + "/" + url.lstrip("/")
 
-        # Prefer full product name from image alt (usually not truncated)
         img_tag = card.select_one("img[alt]")
+        image_url = None
+        if img_tag:
+            image_url = img_tag.get("data-src") or img_tag.get("data-original") or img_tag.get("src")
+            if image_url and not image_url.startswith("http"):
+                image_url = BASE_URL.rstrip("/") + "/" + image_url.lstrip("/")
+
         if img_tag and img_tag.get("alt"):
             name = img_tag.get("alt").strip()
         else:
@@ -143,17 +209,16 @@ def parse_products(html: str, product_type: str) -> Dict[str, Dict[str, Any]]:
             "stock_status": stock_info["stock_status"],
             "quantity": stock_info["quantity"],
             "type": product_type,
+            "image_url": image_url,
         }
 
     return products
-
 
 def fetch_all_products() -> Dict[str, Dict[str, Any]]:
     all_products: Dict[str, Dict[str, Any]] = {}
     urls_to_fetch = []
 
     for base_url in TARGET_URLS:
-
         parts = base_url.rstrip("/").split("/")
         category_slug = parts[-2] if len(parts) >= 2 else base_url
         print(f"\nScanning category: {category_slug}")
@@ -166,83 +231,49 @@ def fetch_all_products() -> Dict[str, Dict[str, Any]]:
             product_type = "Unknown"
 
         page = 1
-
         while True:
             if not is_monitoring_time():
-                now = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
-                print(f"[{now} IST] Outside monitoring hours (9 AM – 10 PM). Sleeping...")
-                time.sleep(300) # sleep for 5 minutes
+                now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+                print(f"[{now_str} IST] Outside monitoring hours (9 AM – 10 PM). Sleeping for 5 min...")
+                time.sleep(300)  # sleep 5 minutes
                 continue
 
             url = base_url if page == 1 else f"{base_url}?page={page}"
-
             html = fetch_page(url)
-
             if html is None:
                 break
 
             soup = BeautifulSoup(html, "html.parser")
             cards = soup.select(".show-product-small-bx")
-
             if not cards:
                 break
 
             urls_to_fetch.append((url, product_type))
-
             page += 1
 
     print(f"\nTotal pages found across all categories: {len(urls_to_fetch)}")
     print("Starting parallel page fetching...")
 
     with ThreadPoolExecutor(max_workers=8) as executor:
-
-        future_to_url = {
-            executor.submit(fetch_page, item[0]): item for item in urls_to_fetch
-        }
-
+        future_to_url = {executor.submit(fetch_page, item[0]): item for item in urls_to_fetch}
         for future in as_completed(future_to_url):
-
             url, product_type = future_to_url[future]
-
             try:
                 html = future.result()
-
                 if html is None:
                     continue
-
                 page_products = parse_products(html, product_type)
-
                 for prod_url, prod in page_products.items():
                     all_products[prod_url] = prod
-
             except Exception as e:
                 print(f"Error processing page {url}: {e}")
 
     print(f"\nTotal products found across all pages: {len(all_products)}")
-
     return all_products
 
-
-def load_previous_products(path: str = PRODUCTS_FILE) -> Dict[str, Dict[str, Any]]:
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except FileNotFoundError:
-        return {}
-    except (json.JSONDecodeError, OSError) as exc:
-        print(f"Warning: could not read {path}: {exc}")
-        return {}
-
-
-def save_products(products: Dict[str, Dict[str, Any]], path: str = PRODUCTS_FILE) -> None:
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(products, f, indent=2, ensure_ascii=False)
-    except OSError as exc:
-        print(f"Error: could not save products to {path}: {exc}")
-
-
+# --------------------------
+# NOTIFICATION FUNCTIONS
+# --------------------------
 def notify_new_product(product: Dict[str, Any]) -> None:
     name = product.get("name", "Unknown")
     price = product.get("price", "Unknown")
@@ -251,6 +282,7 @@ def notify_new_product(product: Dict[str, Any]) -> None:
     url = product.get("url", "")
     prod_type = product.get("type", "Unknown")
     detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    image_url = product.get("image_url")
 
     print("\nNEW LISTING DETECTED")
     print(f"Name : {name}")
@@ -278,20 +310,15 @@ def notify_new_product(product: Dict[str, Any]) -> None:
     ]
     if qty is not None:
         lines.append(f"Qty: {qty}")
-    lines.extend(
-        [
-            "",
-            f"Detected At: {detected_at}",
-            "",
-            "Link:",
-            url,
-        ]
-    )
-    send_telegram_alert("\n".join(lines))
+    lines.extend(["", f"Detected At: {detected_at}", "", "Link:", url])
+
+    if image_url:
+        send_telegram_photo("\n".join(lines), image_url)
+    else:
+        send_telegram_alert("\n".join(lines))
 
     alerted_names.add(name)
     save_alerted_names(alerted_names)
-
 
 def notify_restock(old: Dict[str, Any], new: Dict[str, Any]) -> None:
     name = new.get("name", "Unknown")
@@ -300,6 +327,7 @@ def notify_restock(old: Dict[str, Any], new: Dict[str, Any]) -> None:
     url = new.get("url", "")
     prod_type = new.get("type", "Unknown")
     detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    image_url = new.get("image_url")
 
     print("\nRESTOCK ALERT")
     print(f"Name      : {name}")
@@ -308,9 +336,6 @@ def notify_restock(old: Dict[str, Any], new: Dict[str, Any]) -> None:
     print(f"Type      : {prod_type}")
     print(f"Detected At: {detected_at}")
     print(f"Link      : {url}\n")
-
-    if name in alerted_names:
-        return
 
     lines = [
         "🚨 RESTOCK ALERT",
@@ -325,51 +350,24 @@ def notify_restock(old: Dict[str, Any], new: Dict[str, Any]) -> None:
         "Link:",
         url,
     ]
-    send_telegram_alert("\n".join(lines))
-
-    alerted_names.add(name)
-    save_alerted_names(alerted_names)
-
-
-# def notify_stock_change(old: Dict[str, Any], new: Dict[str, Any]) -> None:
-#     name = new.get("name", "Unknown")
-#     old_stock = old.get("stock_status", "Unknown")
-#     new_stock = new.get("stock_status", "Unknown")
-#     url = new.get("url", "")
-#     print("\nSTOCK CHANGE")
-#     print(f"Name      : {name}")
-#     print(f"Old Stock : {old_stock}")
-#     print(f"New Stock : {new_stock}")
-#     print(f"Link      : {url}\n")
-
-#     lines = [
-#         "🚨 STOCK CHANGE",
-#         "",
-#         f"Name: {name}",
-#         f"Old Stock: {old_stock}",
-#         f"New Stock: {new_stock}",
-#         "",
-#         "Link:",
-#         url,
-#     ]
-#     send_telegram_alert("\n".join(lines))
-
+    if image_url:
+        send_telegram_photo("\n".join(lines), image_url)
+    else:
+        send_telegram_alert("\n".join(lines))
 
 def notify_quantity_change(old: Dict[str, Any], new: Dict[str, Any]) -> None:
-    """
-    Only notify when old quantity is 0 and new quantity > 0
-    """
     old_qty = old.get("quantity")
     new_qty = new.get("quantity")
     if not (isinstance(old_qty, int) and isinstance(new_qty, int)):
         return
     if old_qty != 0 or new_qty <= 0:
-        return  # only notify when 0 -> available
+        return
 
     name = new.get("name", "Unknown")
     url = new.get("url", "")
     prod_type = new.get("type", "Unknown")
     detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    image_url = new.get("image_url")
 
     print("\nQUANTITY RESTOCK")
     print(f"Name   : {name}")
@@ -378,9 +376,6 @@ def notify_quantity_change(old: Dict[str, Any], new: Dict[str, Any]) -> None:
     print(f"New Qty: {new_qty}")
     print(f"Detected At: {detected_at}")
     print(f"Link   : {url}\n")
-
-    if name in alerted_names:
-        return
 
     lines = [
         "🚨 QUANTITY RESTOCK",
@@ -395,12 +390,14 @@ def notify_quantity_change(old: Dict[str, Any], new: Dict[str, Any]) -> None:
         "Link:",
         url,
     ]
-    send_telegram_alert("\n".join(lines))
+    if image_url:
+        send_telegram_photo("\n".join(lines), image_url)
+    else:
+        send_telegram_alert("\n".join(lines))
 
-    alerted_names.add(name)
-    save_alerted_names(alerted_names)
-
-
+# --------------------------
+# MONITOR FUNCTION
+# --------------------------
 def monitor() -> None:
     print("Starting monitor for configured categories:")
     for url in TARGET_URLS:
@@ -455,18 +452,75 @@ def monitor() -> None:
                     notify_restock(old, new)
                     changes_detected = True
 
-                # QUANTITY: only notify when 0 -> available
                 notify_quantity_change(old, new)
 
             save_products(current_products)
             previous_products = current_products
-
             print(f"Scan completed - {detected_count} products checked.\n")
             time.sleep(CHECK_INTERVAL_SECONDS)
 
     except KeyboardInterrupt:
         print("\nMonitoring stopped by user.")
 
-
+# --------------------------
+# TEST BLOCK
+# --------------------------
 if __name__ == "__main__":
+    # To run full monitor, uncomment:
     monitor()
+
+    # Real product test
+    # print("\n===== RUNNING TEST ALERTS =====\n")
+
+    # test_url = "https://www.karzanddolls.com/product/mini-gt/mini-gt-shelby-gt500-dragon-snake-concept-blackgold%C2%A0/82014a1efeab3a92d1a48f7784604b8783c3c9e561e169330e68ef954bc0430337a967c5d7d15b45a05101c7393ad9a9cda8844f8fc00cfd3bcd7a5a71f68109LsVSmuou6WXaYJgRSf7b9H4oxaIJ_w7g+mQMXMt3S54-"
+
+    # # NEW LISTING TEST
+    # new_listing = {
+    #     "name": "LB-WORKS FORD MUSTANG TRIPLE YELLOW",
+    #     "type": "Box",
+    #     "price": "Rs. 1199",
+    #     "stock_status": "In stock (qty 107)",
+    #     "quantity": 107,
+    #     "url": test_url,
+    #     "image_url": fetch_product_image(test_url)
+    # }
+    # print("--- NEW LISTING ALERT ---")
+    # notify_new_product(new_listing)
+
+    # # RESTOCK TEST (sold out -> in stock)
+    # old_restock = {
+    #     "name": "LB-WORKS FORD MUSTANG TRIPLE YELLOW",
+    #     "type": "Box",
+    #     "stock_status": "Sold Out",
+    #     "quantity": 0,
+    #     "url": test_url,
+    # }
+    # new_restock = {
+    #     "name": "LB-WORKS FORD MUSTANG TRIPLE YELLOW",
+    #     "type": "Box",
+    #     "stock_status": "In stock (qty 107)",
+    #     "quantity": 107,
+    #     "url": test_url,
+    #     "image_url": fetch_product_image(test_url)
+    # }
+    # print("--- RESTOCK ALERT ---")
+    # notify_restock(old_restock, new_restock)
+
+    # # QUANTITY RESTOCK TEST (0 -> available)
+    # old_qty = {
+    #     "name": "LB-WORKS FORD MUSTANG TRIPLE YELLOW",
+    #     "type": "Box",
+    #     "quantity": 0,
+    #     "url": test_url,
+    # }
+    # new_qty = {
+    #     "name": "LB-WORKS FORD MUSTANG TRIPLE YELLOW",
+    #     "type": "Box",
+    #     "quantity": 107,
+    #     "url": test_url,
+    #     "image_url": fetch_product_image(test_url)
+    # }
+    # print("--- QUANTITY CHANGE ALERT ---")
+    # notify_quantity_change(old_qty, new_qty)
+
+    # print("\n===== TESTING COMPLETED =====\n")
