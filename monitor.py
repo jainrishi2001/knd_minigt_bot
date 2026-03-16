@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Set
 import pytz
+import copy
 import requests
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -500,7 +501,7 @@ def monitor() -> None:
                 notify_sold_out(old, new)
 
             save_products(current_products)
-            previous_products = current_products
+            previous_products = copy.deepcopy(current_products)
             print(f"Scan completed - {detected_count} products checked.\n")
             time.sleep(CHECK_INTERVAL_SECONDS)
 
