@@ -281,7 +281,7 @@ def notify_new_product(product: Dict[str, Any]) -> None:
     qty = product.get("quantity")
     url = product.get("url", "")
     prod_type = product.get("type", "Unknown")
-    detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    detected_at = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
     image_url = product.get("image_url")
 
     print("\nNEW LISTING DETECTED")
@@ -326,7 +326,7 @@ def notify_restock(old: Dict[str, Any], new: Dict[str, Any]) -> None:
     new_stock = new.get("stock_status", "Unknown")
     url = new.get("url", "")
     prod_type = new.get("type", "Unknown")
-    detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    detected_at = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
     image_url = new.get("image_url")
 
     print("\nRESTOCK ALERT")
@@ -366,7 +366,7 @@ def notify_restock(old: Dict[str, Any], new: Dict[str, Any]) -> None:
 #     name = new.get("name", "Unknown")
 #     url = new.get("url", "")
 #     prod_type = new.get("type", "Unknown")
-#     detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+#     detected_at = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
 #     image_url = new.get("image_url")
 
 #     print("\nQUANTITY RESTOCK")
@@ -411,7 +411,7 @@ def notify_sold_out(old: Dict[str, Any], new: Dict[str, Any]) -> None:
     name = new.get("name", "Unknown")
     url = new.get("url", "")
     prod_type = new.get("type", "Unknown")
-    detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    detected_at = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
     stock_status = new.get("stock_status", "Sold Out")
 
     print("\nSOLD OUT ALERT")
@@ -568,5 +568,5 @@ if __name__ == "__main__":
     # }
     # print("--- SOLD OUT ALERT ---")
     # notify_sold_out(old_sold_out, new_sold_out)
-    
+
     # print("\n===== TESTING COMPLETED =====\n")
