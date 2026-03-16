@@ -463,8 +463,10 @@ def monitor() -> None:
             current_products = fetch_all_products()
             detected_count = len(current_products)
 
-            previous_names = {v["name"]: v for v in previous_products.values()}
-            current_names = {v["name"]: v for v in current_products.values()}
+            # previous_names = {v["name"]: v for v in previous_products.values()} # Only name as key
+            # current_names = {v["name"]: v for v in current_products.values()}
+            previous_names = {f'{v["name"]}|{v["type"]}': v for v in previous_products.values()} # Name and type as key
+            current_names = {f'{v["name"]}|{v["type"]}': v for v in current_products.values()}
 
             changes_detected = False
 
