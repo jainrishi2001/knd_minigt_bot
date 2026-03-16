@@ -355,41 +355,86 @@ def notify_restock(old: Dict[str, Any], new: Dict[str, Any]) -> None:
     else:
         send_telegram_alert("\n".join(lines))
 
-def notify_quantity_change(old: Dict[str, Any], new: Dict[str, Any]) -> None:
+# def notify_quantity_change(old: Dict[str, Any], new: Dict[str, Any]) -> None:
+#     old_qty = old.get("quantity")
+#     new_qty = new.get("quantity")
+#     if not (isinstance(old_qty, int) and isinstance(new_qty, int)):
+#         return
+#     if old_qty != 0 or new_qty <= 0:
+#         return
+
+#     name = new.get("name", "Unknown")
+#     url = new.get("url", "")
+#     prod_type = new.get("type", "Unknown")
+#     detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+#     image_url = new.get("image_url")
+
+#     print("\nQUANTITY RESTOCK")
+#     print(f"Name   : {name}")
+#     print(f"Type   : {prod_type}")
+#     print(f"Old Qty: {old_qty}")
+#     print(f"New Qty: {new_qty}")
+#     print(f"Detected At: {detected_at}")
+#     print(f"Link   : {url}\n")
+
+#     lines = [
+#         "🚨 QUANTITY RESTOCK",
+#         "",
+#         f"Name: {name}",
+#         f"Type: {prod_type}",
+#         f"Old Qty: {old_qty}",
+#         f"New Qty: {new_qty}",
+#         "",
+#         f"Detected At: {detected_at}",
+#         "",
+#         "Link:",
+#         url,
+#     ]
+#     if image_url:
+#         send_telegram_photo("\n".join(lines), image_url)
+#     else:
+#         send_telegram_alert("\n".join(lines))
+
+def notify_sold_out(old: Dict[str, Any], new: Dict[str, Any]) -> None:
+    """
+    Notify when a product that was in stock is now sold out (quantity 0).
+    """
     old_qty = old.get("quantity")
     new_qty = new.get("quantity")
+
+    # Only trigger if product was in stock and now 0
     if not (isinstance(old_qty, int) and isinstance(new_qty, int)):
         return
-    if old_qty != 0 or new_qty <= 0:
-        return
+    if old_qty <= 0 or new_qty != 0:
+        return  # skip if it wasn't in stock before or not sold out now
 
     name = new.get("name", "Unknown")
     url = new.get("url", "")
     prod_type = new.get("type", "Unknown")
     detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    image_url = new.get("image_url")
+    stock_status = new.get("stock_status", "Sold Out")
 
-    print("\nQUANTITY RESTOCK")
+    print("\nSOLD OUT ALERT")
     print(f"Name   : {name}")
     print(f"Type   : {prod_type}")
-    print(f"Old Qty: {old_qty}")
-    print(f"New Qty: {new_qty}")
+    print(f"Qty    : {new_qty}")
     print(f"Detected At: {detected_at}")
     print(f"Link   : {url}\n")
 
     lines = [
-        "🚨 QUANTITY RESTOCK",
+        "⚠️ SOLD OUT ALERT",
         "",
         f"Name: {name}",
         f"Type: {prod_type}",
-        f"Old Qty: {old_qty}",
-        f"New Qty: {new_qty}",
+        f"Stock Status: {stock_status}",
         "",
         f"Detected At: {detected_at}",
         "",
         "Link:",
         url,
     ]
+
+    image_url = new.get("image_url")
     if image_url:
         send_telegram_photo("\n".join(lines), image_url)
     else:
@@ -452,7 +497,7 @@ def monitor() -> None:
                     notify_restock(old, new)
                     changes_detected = True
 
-                notify_quantity_change(old, new)
+                notify_sold_out(old, new)
 
             save_products(current_products)
             previous_products = current_products
@@ -506,21 +551,22 @@ if __name__ == "__main__":
     # print("--- RESTOCK ALERT ---")
     # notify_restock(old_restock, new_restock)
 
-    # # QUANTITY RESTOCK TEST (0 -> available)
-    # old_qty = {
+    # SOLD OUT TEST
+    # old_sold_out = {
     #     "name": "LB-WORKS FORD MUSTANG TRIPLE YELLOW",
     #     "type": "Box",
+    #     "stock_status": "In stock (qty 107)",
+    #     "quantity": 107,
+    #     "url": test_url,
+    # }
+    # new_sold_out = {
+    #     "name": "LB-WORKS FORD MUSTANG TRIPLE YELLOW",
+    #     "type": "Box",
+    #     "stock_status": "Sold Out",
     #     "quantity": 0,
     #     "url": test_url,
     # }
-    # new_qty = {
-    #     "name": "LB-WORKS FORD MUSTANG TRIPLE YELLOW",
-    #     "type": "Box",
-    #     "quantity": 107,
-    #     "url": test_url,
-    #     "image_url": fetch_product_image(test_url)
-    # }
-    # print("--- QUANTITY CHANGE ALERT ---")
-    # notify_quantity_change(old_qty, new_qty)
-
+    # print("--- SOLD OUT ALERT ---")
+    # notify_sold_out(old_sold_out, new_sold_out)
+    
     # print("\n===== TESTING COMPLETED =====\n")
